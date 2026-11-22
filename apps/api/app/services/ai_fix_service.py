@@ -236,11 +236,18 @@ RELEVANT CODEBASE CONTEXT:
 DEVELOPER GUIDANCE:
 {instructions}
 
+PRECISION RULES:
+1. NEVER remove an entire import statement if only one imported name is unused (e.g. from `import sys, os` where `sys` is unused, keep `import os`).
+2. Strictly preserve all unrelated functions, variables, comments, and imports.
+3. The `proposed_code` MUST match the replacement in `diff_patch` exactly.
+4. For `regression_test`, provide a genuine pytest test function (or ast/unit check). NEVER write `assert True`, `pass`, or placeholder tests. If a standalone regression test cannot meaningfully verify this rule without external infrastructure, explicitly state that limitation in the test docstring and write:
+# NOTE: Standalone unit test cannot verify this rule without live runtime environment.
+
 TASK:
 1. Explain the bug or vulnerability in plain language and why it matters.
 2. Provide a concise root-cause analysis.
 3. Provide the clean, corrected replacement Python code.
-4. Provide a standard unified diff patch (`--- a/{finding.file_path}\n+++ b/{finding.file_path}`).
+4. Provide a standard unified diff patch (`--- a/{finding.file_path}\\n+++ b/{finding.file_path}`).
 5. Provide a standalone pytest test case to verify this fix and guard against regressions.
 
 CRITICAL: Return ONLY a valid JSON object matching this exact schema:
@@ -336,7 +343,7 @@ Do not include any explanation or markdown formatting outside the JSON object.
         except SyntaxError:
             # Code snippet might be an indented function body or method
             try:
-                wrapped = f"def _code_fix_scope():\n" + "\n".join("    " + line for line in proposed_code.splitlines())
+                wrapped = "def _code_fix_scope():\n" + "\n".join("    " + line for line in proposed_code.splitlines())
                 ast.parse(wrapped)
             except SyntaxError as e:
                 issues.append(f"Proposed code syntax error: {e.msg} at line {e.lineno}")
@@ -350,7 +357,7 @@ Do not include any explanation or markdown formatting outside the JSON object.
         if issues:
             return "syntax_warning", "; ".join(issues)
 
-        # 3. Linter verification using isolated Ruff run on temporary file
+        # 3. Static linter verification using isolated Ruff run on temporary file
         ruff_verified = False
         try:
             with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as tmp:
@@ -406,42 +413,109 @@ Do not include any explanation or markdown formatting outside the JSON object.
         return "".join(diff)
 
     @classmethod
+    def _fix_unused_import_snippet(cls, snippet: str, unused_name: str) -> str:
+        """Helper to surgically remove only the unused import name while preserving others."""
+        lines = snippet.splitlines()
+        new_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("import ") and unused_name in stripped:
+                names = [n.strip() for n in stripped[7:].split(",")]
+                filtered_names = [n for n in names if n != unused_name and not n.startswith(f"{unused_name} ")]
+                if filtered_names:
+                    indent = line[: len(line) - len(line.lstrip())]
+                    new_lines.append(f"{indent}import {', '.join(filtered_names)}")
+                continue
+            elif stripped.startswith("from ") and " import " in stripped and unused_name in stripped:
+                prefix, imports = stripped.split(" import ", 1)
+                names = [n.strip() for n in imports.split(",")]
+                filtered_names = [n for n in names if n != unused_name and not n.startswith(f"{unused_name} ")]
+                if filtered_names:
+                    indent = line[: len(line) - len(line.lstrip())]
+                    new_lines.append(f"{indent}{prefix} import {', '.join(filtered_names)}")
+                continue
+            new_lines.append(line)
+        return "\n".join(new_lines) if new_lines else f"# Unused import '{unused_name}' removed by Code-Fix AI"
+
+    @classmethod
     def _get_mock_fallback(cls, finding: Any) -> Dict[str, str]:
         """Generate high-fidelity structured fix when external LLM service is offline."""
         rule = finding.rule_id
         orig = finding.code_snippet or ""
         file_path = finding.file_path
+        title = finding.title or ""
+
+        # Extract unused import name if rule F401
+        match = re.search(r"[`']([^`']+)[`'] imported but unused", title)
+        unused_symbol = match.group(1) if match else "unused_module"
 
         # Intelligent rule-specific fix proposals
         if rule == "F401":
-            proposed = "# Unused import removed by Code-Fix AI"
-            explanation = f"The import in `{file_path}` is never referenced, polluting the module namespace and adding unnecessary import overhead."
-            root_cause = "Import statement defined without corresponding references in the AST scope."
-        elif rule.startswith("S105") or rule.startswith("S106") or "password" in finding.title.lower():
+            if orig:
+                proposed = cls._fix_unused_import_snippet(orig, unused_symbol)
+            else:
+                proposed = f"# Unused import '{unused_symbol}' removed by Code-Fix AI"
+            explanation = f"The import `{unused_symbol}` in `{file_path}` is never referenced, polluting the module namespace."
+            root_cause = f"Import statement for `{unused_symbol}` defined without corresponding references in the AST scope."
+            test_case = f"""import ast
+
+def test_unused_import_{unused_symbol.replace('.', '_')}_removed():
+    \"\"\"Verify that '{unused_symbol}' is no longer imported without reference.\"\"\"
+    source = \"\"\"{proposed}\"\"\"
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert alias.name != '{unused_symbol}', "Unused import '{unused_symbol}' still present"
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                assert alias.name != '{unused_symbol}', "Unused import '{unused_symbol}' still present in from-import"
+"""
+        elif rule.startswith("S105") or rule.startswith("S106") or "password" in title.lower():
             proposed = 'import os\n\nSECRET_KEY = os.environ.get("APP_SECRET_KEY", "")'
             explanation = "Hardcoded password or secret token detected. Credentials must be extracted to environment variables or secret vaults."
             root_cause = "Hardcoded string literal assigned to sensitive credential identifier."
-        elif "hash" in finding.title.lower() or rule.startswith("S303") or rule.startswith("S324"):
+            test_case = f"""import os
+
+def test_secret_not_hardcoded():
+    \"\"\"Verify that SECRET_KEY is read from environment rather than hardcoded string.\"\"\"
+    assert 'os.environ.get' in \"\"\"{proposed}\"\"\"
+"""
+        elif "hash" in title.lower() or rule.startswith("S303") or rule.startswith("S324") or "insecure-hash" in rule:
             proposed = "import hashlib\n\nsecure_hash = hashlib.sha256(data.encode('utf-8')).hexdigest()"
             explanation = "Insecure cryptographic hashing algorithm (such as MD5 or SHA1) detected. Replaced with cryptographically secure SHA-256."
             root_cause = "Legacy hashing primitive vulnerable to collision attacks."
-        elif "subprocess" in finding.title.lower() or rule == "S602":
+            test_case = f"""import hashlib
+
+def test_secure_hash_sha256_used():
+    \"\"\"Verify that SHA-256 algorithm is utilized instead of weak MD5/SHA1.\"\"\"
+    data = b"test_payload"
+    assert hashlib.sha256(data).hexdigest() is not None
+"""
+        elif "subprocess" in title.lower() or rule == "S602" or "subprocess-shell-true" in rule:
             proposed = "import subprocess\n\nsubprocess.run(['ls', '-la'], check=True, shell=False)"
             explanation = "Execution of subprocess with shell=True is vulnerable to command injection if untrusted input is passed."
             root_cause = "Passing `shell=True` to subprocess invocation."
+            test_case = f"""import ast
+
+def test_subprocess_shell_false():
+    \"\"\"Verify that subprocess invocation does not set shell=True.\"\"\"
+    source = \"\"\"{proposed}\"\"\"
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and hasattr(node.func, 'attr') and node.func.attr == 'run':
+            for keyword in node.keywords:
+                if keyword.arg == 'shell':
+                    assert isinstance(keyword.value, ast.Constant) and keyword.value.value is False
+"""
         else:
             proposed = f"# Code-Fix AI correction for {rule}\n" + (orig if orig else "pass")
-            explanation = f"Violation `{rule}` detected by {finding.scanner}: {finding.title}. Corrected to comply with quality and security standards."
+            explanation = f"Violation `{rule}` detected by {finding.scanner}: {title}. Corrected to comply with quality and security standards."
             root_cause = f"Violation of rule {rule} in source file {file_path}."
+            test_case = f"""# NOTE: Standalone unit test cannot verify rule {rule} without live runtime environment.
+"""
 
         diff = cls._generate_unified_diff(file_path, orig, proposed)
-        test_case = f"""import pytest
-
-def test_{rule.lower().replace('-', '_').replace('.', '_')}_resolution():
-    \"\"\"Regression test verifying fix for {rule} in {file_path}.\"\"\"
-    # Verify that the corrected implementation behaves securely and correctly
-    assert True
-"""
 
         return {
             "explanation": explanation,
@@ -451,4 +525,3 @@ def test_{rule.lower().replace('-', '_').replace('.', '_')}_resolution():
             "diff_patch": diff,
             "regression_test": test_case,
         }
-
