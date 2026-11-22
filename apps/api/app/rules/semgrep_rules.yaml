@@ -1,0 +1,80 @@
+rules:
+  - id: python.security.eval-exec-detected
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+    message: "Detected use of eval() or exec(). This allows arbitrary code execution if user input is supplied."
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+      confidence: HIGH
+
+  - id: python.security.subprocess-shell-true
+    pattern-either:
+      - pattern: subprocess.Popen(..., shell=True, ...)
+      - pattern: subprocess.run(..., shell=True, ...)
+      - pattern: subprocess.call(..., shell=True, ...)
+      - pattern: subprocess.check_output(..., shell=True, ...)
+    message: "Detected subprocess invocation with shell=True. This can lead to shell command injection."
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      confidence: HIGH
+
+  - id: python.security.insecure-deserialization-pickle
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+      - pattern: _pickle.loads(...)
+      - pattern: _pickle.load(...)
+    message: "Avoid using pickle for deserializing untrusted data. It can execute arbitrary code during unpickling."
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      confidence: HIGH
+
+  - id: python.security.insecure-deserialization-yaml
+    pattern: yaml.load($DATA, Loader=yaml.Loader)
+    message: "Detected unsafe yaml.load with default or standard Loader. Use yaml.safe_load instead."
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      confidence: HIGH
+
+  - id: python.security.insecure-hash-md5-sha1
+    pattern-either:
+      - pattern: hashlib.md5(...)
+      - pattern: hashlib.sha1(...)
+    message: "Detected use of weak cryptographic hash (MD5 or SHA1). Consider SHA-256 for security-sensitive contexts."
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-328: Use of Weak Hash"
+      confidence: MEDIUM
+
+  - id: python.security.insecure-ssl-verify-disabled
+    pattern-either:
+      - pattern: requests.$METHOD(..., verify=False, ...)
+      - pattern: httpx.$METHOD(..., verify=False, ...)
+    message: "SSL verification is disabled (verify=False). This allows man-in-the-middle attacks."
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-295: Improper Certificate Validation"
+      confidence: HIGH
+
+  - id: python.security.hardcoded-jwt-secret
+    pattern-either:
+      - pattern: jwt.encode(..., "$SECRET", ...)
+      - pattern: jwt.decode(..., "$SECRET", ...)
+    message: "Hardcoded secret key detected in JWT operation. Store keys in environment variables."
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      confidence: MEDIUM
+
