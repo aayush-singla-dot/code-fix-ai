@@ -24,6 +24,7 @@ class DbCheckResponse(BaseModel):
 
 
 @router.get("/health", response_model=HealthResponse)
+@router.get("/api/health", response_model=HealthResponse)
 async def health_check():
     """Verify that the FastAPI service is running and responsive."""
     return HealthResponse(
@@ -35,6 +36,7 @@ async def health_check():
 
 
 @router.get("/db-check", response_model=DbCheckResponse)
+@router.get("/api/db-check", response_model=DbCheckResponse)
 async def db_check():
     """Verify active connectivity to Supabase PostgreSQL without leaking credentials."""
     is_connected, message = await check_db_connection()

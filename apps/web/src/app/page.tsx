@@ -257,7 +257,7 @@ export default function Home() {
           <div className="flex items-center gap-4">
             <span className="inline-flex items-center gap-1 text-slate-400">
               <ExternalLink className="h-3 w-3" />
-              API: {API_BASE_URL}
+              API: {API_BASE_URL || "Same-Domain (/api)"}
             </span>
           </div>
         </footer>

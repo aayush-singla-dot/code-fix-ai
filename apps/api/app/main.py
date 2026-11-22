@@ -52,6 +52,7 @@ app.include_router(fixes.router)
 
 
 @app.get("/", tags=["Root"])
+@app.get("/api", tags=["Root"])
 async def root():
     """Root metadata discovery endpoint."""
     return {
@@ -59,7 +60,7 @@ async def root():
         "version": settings.APP_VERSION,
         "status": "online",
         "documentation": "/docs",
-        "health": "/health",
-        "db_check": "/db-check",
+        "health": "/api/health",
+        "db_check": "/api/db-check",
     }
 

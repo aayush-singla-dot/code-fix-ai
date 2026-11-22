@@ -3,9 +3,24 @@
  * Typed client for communicating with the FastAPI backend.
  */
 
-const rawBaseUrl =
-  process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-export const API_BASE_URL = rawBaseUrl.replace(/\/+$/, "");
+/**
+ * Resolves the API base URL.
+ * In production Vercel Multi-Service, frontend and backend share the same domain,
+ * so same-domain relative paths (e.g. "" + "/api/...") are used.
+ * In local development, defaults to the dedicated FastAPI dev server (http://127.0.0.1:8000).
+ * Can be explicitly overridden with NEXT_PUBLIC_API_URL.
+ */
+function resolveBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL !== undefined) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, "");
+  }
+  if (process.env.NODE_ENV === "production") {
+    return "";
+  }
+  return "http://127.0.0.1:8000";
+}
+
+export const API_BASE_URL = resolveBaseUrl();
 
 // ── Core response types ──────────────────────────────────────────────────────
 
@@ -176,11 +191,11 @@ async function apiFetch<T>(
 // ── Milestone 1 endpoints ────────────────────────────────────────────────────
 
 export async function checkHealth(): Promise<HealthResponse> {
-  return apiFetch<HealthResponse>("/health");
+  return apiFetch<HealthResponse>("/api/health");
 }
 
 export async function checkDatabase(): Promise<DbCheckResponse> {
-  return apiFetch<DbCheckResponse>("/db-check");
+  return apiFetch<DbCheckResponse>("/api/db-check");
 }
 
 // ── Milestone 2: Repository endpoints ───────────────────────────────────────
